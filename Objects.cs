@@ -7,12 +7,12 @@ using System.Threading.Tasks;
 
 namespace vmb
 {
-    public class ApplicationCommandObject
+    public class InteractionObject
     {
         public string id { get; set; }
         public string application_id { get; set; }
         public Int16 type { get; set; }
-        public ApplicationCommandData data { get; set; }
+        public InteractionData data { get; set; }
         public string guild_id { get; set; }
         public Channel channel { get; set; }
         public string channel_id { get; set; }
@@ -24,7 +24,7 @@ namespace vmb
         public string locale { get; set; }
         public string guild_locale { get; set; }
     }
-    public class ApplicationCommandData
+    public class InteractionData
     {
         public string id { get; set; }
         public string name { get; set; }
@@ -40,6 +40,16 @@ namespace vmb
         public Dictionary<Int16, GuildMember> members { get; set; }
         public Dictionary<Int16, Channel> channels { get; set; }
         public Dictionary<Int16, Attachment> attachments { get; set; }
+    }
+    public class ApplicationCommandObject
+    {
+        public string id { get; set; }
+        public int type {  get; set; }
+        public string application_id { get; set; }
+        public string guild_id { get; set; }
+        public string name { get; set; }
+        public string description { get; set; }
+        public ApplicationCommandOption options {  get; set; }
     }
     public class ApplicationCommandOption
     {

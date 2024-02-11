@@ -33,19 +33,12 @@ namespace vmb
                 token = Regex.Match(props, @"botToken=(\S+)").Groups[1].Value;
                 appID = Regex.Match(props, @"appID=(.*)").Groups[1].Value;
             }
-            try
-            {
-                await GetCommands(token, appID);
-            }
-            catch (Exception ex)
-            {
-                Console.Write(ex.ToString());
-            }
+            await DeleteCommand(token, appID, "1197511904193679393");
             X509Certificate cert = X509Certificate.CreateFromCertFile("cert.pfx");
             var server = new TcpListener(IPAddress.Any, 443);
             server.Start();
             Console.WriteLine("Strated");
-            byte[] msgBuf = new byte[1024];
+            byte[] msgBuf = new byte[2048];
             string response = "HTTP/1.1 200 OK\r\nHost: vkmusicbot.ru\r\nConnection: Close\r\n\r\n";
             while (true)
             {
@@ -87,15 +80,26 @@ namespace vmb
                         else
                         {
                             Console.WriteLine("ok");
-                            ApplicationCommandObject interactionMsg = JsonSerializer.Deserialize<ApplicationCommandObject>(msg);
+                            InteractionObject interactionMsg = JsonSerializer.Deserialize<InteractionObject>(msg);
                             if (interactionMsg.type == 1)
                             {
                                 await sslStream.WriteAsync(Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 10\r\n\r\n" +
-                                    JsonSerializer.Serialize<ApplicationCommandObject>(new ApplicationCommandObject { type = 1 })));
+                                    JsonSerializer.Serialize<InteractionObject>(new InteractionObject { type = 1 })));
+                            }
+                            if (interactionMsg.type == 2)
+                            {
+                                if (interactionMsg.data.name == "test")
+                                {
+                                    var resp = new InteractionResponse { type = 4, data = new InteractionCallbackData { content = "it works" } };
+                                    await sslStream.WriteAsync(Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\n" +
+                                            "Content-Type: application/json\r\n\r\n" +
+                                            JsonSerializer.Serialize(resp)));
+                                }
                             }
                         }
                     }
-                    else if (Regex.IsMatch(msg, " /")) { }                }
+                    else if (Regex.IsMatch(msg, " /")) { }
+                }
                 catch (AuthenticationException e)
                 {
                     Console.WriteLine("Exception: {0}", e.Message);
@@ -113,7 +117,7 @@ namespace vmb
         static async Task GetCommands(string token, string appID)
         {
             using HttpClient client = new HttpClient();
-            client.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", token);
+            client.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", "Bot "+token);
             var response = await client.GetAsync($"https://discord.com/api/v10/applications/{appID}/commands");
             if (response.IsSuccessStatusCode)
             {
@@ -127,6 +131,15 @@ namespace vmb
                 var responseText = await response.Content.ReadAsStringAsync();
                 Console.WriteLine(responseText);
             }
+        }
+        
+        static async Task DeleteCommand(string token, string appID, string commandID)
+        {
+            using HttpClient client = new HttpClient();
+            client.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", "Bot " + token);
+            var response = await client.DeleteAsync($"https://discord.com/api/v10/applications/{appID}/commands/{commandID}");
+            Console.WriteLine(response.StatusCode);
+            Console.WriteLine(response.Content.ReadAsStringAsync());
         }
         static byte[] HexStrToByteArr(string hexStr)
         {
