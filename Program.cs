@@ -10,114 +10,90 @@ using System.Text.RegularExpressions;
 using System.Text.Json;
 using System.Runtime.CompilerServices;
 using System.Net.Http.Headers;
+using Microsoft.VisualBasic;
+using System.Text.Json.Serialization;
+using vmb;
 
-namespace vmb
+internal class Program
 {
-    internal class Program
+    private static async Task Main(string[] args)
     {
-        static async Task Main2()
+        string pubKey;
+        string token;
+        string appID;
+        using (FileStream fs = File.OpenRead("props"))
         {
-
+            byte[] bytes = new byte[fs.Length];
+            fs.Read(bytes);
+            string props = Encoding.UTF8.GetString(bytes);
+            pubKey = Regex.Match(props, @"pubKey=(.*)").Groups[1].Value;
+            token = Regex.Match(props, @"botToken=(\S+)").Groups[1].Value;
+            appID = Regex.Match(props, @"appID=(.*)").Groups[1].Value;
         }
-        static async Task Main()
+        X509Certificate cert = X509Certificate.CreateFromCertFile("cert.pfx");
+        var server = new TcpListener(IPAddress.Any, 443);
+        server.Start();
+        Console.WriteLine("Strated"); ;
+        string httpHeader = "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n";
+        byte[] msgBuff = new byte[2048];
+        while (true)
         {
-            string pubKey;
-            string token;
-            string appID;
-            using (FileStream fs = File.OpenRead("props"))
+            //ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls13;
+            using var client = await server.AcceptTcpClientAsync();
+            using SslStream sslStream = new SslStream(client.GetStream(), false);
+            sslStream.AuthenticateAsServer(cert, clientCertificateRequired: false, SslProtocols.Tls13, checkCertificateRevocation: true);
+            sslStream.ReadTimeout = 5000;
+            sslStream.WriteTimeout = 5000;
+            sslStream.Read(msgBuff);
+            string msg = Encoding.UTF8.GetString(msgBuff);
+            Console.WriteLine(msg);
+            if (Regex.IsMatch(msg, "/interactions"))
             {
-                byte[] bytes = new byte[fs.Length];
-                fs.Read(bytes);
-                string props = Encoding.UTF8.GetString(bytes);
-                pubKey = Regex.Match(props, @"pubKey=(.*)").Groups[1].Value;
-                token = Regex.Match(props, @"botToken=(\S+)").Groups[1].Value;
-                appID = Regex.Match(props, @"appID=(.*)").Groups[1].Value;
-            }
-            await DeleteCommand(token, appID, "1197511904193679393");
-            X509Certificate cert = X509Certificate.CreateFromCertFile("cert.pfx");
-            var server = new TcpListener(IPAddress.Any, 443);
-            server.Start();
-            Console.WriteLine("Strated");
-            byte[] msgBuf = new byte[2048];
-            string response = "HTTP/1.1 200 OK\r\nHost: vkmusicbot.ru\r\nConnection: Close\r\n\r\n";
-            while (true)
-            {
-                //ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls13;
-                using var client = await server.AcceptTcpClientAsync();
-                using SslStream sslStream = new SslStream(client.GetStream(), false);
-                try
+                int bodyLength = int.Parse(Regex.Match(msg, @"content-length: (\d*)").Groups[1].Value);
+                Regex credsRegex = new Regex(@"x-signature-timestamp: (\d*)\r\nx-signature-ed25519: (.{128})");
+                byte[] body = new byte[bodyLength];
+                for (int i = Array.FindIndex(msgBuff, (b) => { return b == 123; }), j = 0; j < body.Length; i++, j++)
                 {
-                    sslStream.AuthenticateAsServer(cert, clientCertificateRequired: false, SslProtocols.Tls13, checkCertificateRevocation: true);
-                    sslStream.ReadTimeout = 5000;
-                    sslStream.WriteTimeout = 5000;
-                    sslStream.Read(msgBuf);
-                    string msg = Encoding.UTF8.GetString(msgBuf);
-                    Console.WriteLine(msg);
-                    if (Regex.IsMatch(msg, "/interactions"))
-                    {
-                        Regex bodyLen = new Regex(@"content-length: (\d*)");
-                        Regex bodyRegx = new Regex(@"\r\n\r\n(.{" + Int32.Parse(bodyLen.Match(msg).Groups[1].Value) + "})");
-                        Regex credsRegex = new Regex(@"x-signature-timestamp: (\d*)\r\nx-signature-ed25519: (.{128})");
-                        string body = bodyRegx.Match(msg).Groups[1].Value;
-                        var creds = credsRegex.Match(msg);
-                        byte[] signature = HexStrToByteArr(creds.Groups[2].Value);
-                        byte[] message = new byte[creds.Groups[1].Length + body.Length];
-                        for (int i = 0; i < creds.Groups[1].Length; i++)
-                        {
-                            message[i] = (byte)creds.Groups[1].Value[i];
-                        }
-                        int pointer = creds.Groups[1].Length;
-                        foreach (char c in body)
-                        {
-                            message[pointer] = (byte)c;
-                            pointer++;
-                        }
-                        if (!Chaos.NaCl.Ed25519.Verify(signature, message, HexStrToByteArr(pubKey)))
-                        {
-                            Console.WriteLine("not ok");
-                            await sslStream.WriteAsync(Encoding.UTF8.GetBytes("HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\n\r\nBad request signature"));
-                        }
-                        else
-                        {
-                            Console.WriteLine("ok");
-                            InteractionObject interactionMsg = JsonSerializer.Deserialize<InteractionObject>(msg);
-                            if (interactionMsg.type == 1)
-                            {
-                                await sslStream.WriteAsync(Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 10\r\n\r\n" +
-                                    JsonSerializer.Serialize<InteractionObject>(new InteractionObject { type = 1 })));
-                            }
-                            if (interactionMsg.type == 2)
-                            {
-                                if (interactionMsg.data.name == "test")
-                                {
-                                    var resp = new InteractionResponse { type = 4, data = new InteractionCallbackData { content = "it works" } };
-                                    await sslStream.WriteAsync(Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\n" +
-                                            "Content-Type: application/json\r\n\r\n" +
-                                            JsonSerializer.Serialize(resp)));
-                                }
-                            }
-                        }
-                    }
-                    else if (Regex.IsMatch(msg, " /")) { }
+                    if (msgBuff[i] == 0) break;
+                    body[j] = msgBuff[i];
                 }
-                catch (AuthenticationException e)
+                var creds = credsRegex.Match(msg);
+                byte[] signature = HexStrToByteArr(creds.Groups[2].Value);
+                byte[] message = new byte[creds.Groups[1].Length + body.Length];
+                Array.Copy(Encoding.UTF8.GetBytes(creds.Groups[1].Value), message, creds.Groups[1].Length);
+                Array.Copy(body, 0, message, creds.Groups[1].Length, body.Length);
+                if (!Chaos.NaCl.Ed25519.Verify(signature, message, HexStrToByteArr(pubKey)))
                 {
-                    Console.WriteLine("Exception: {0}", e.Message);
-                    if (e.InnerException != null)
+                    Console.WriteLine("not ok");
+                    await sslStream.WriteAsync(Encoding.UTF8.GetBytes("HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\n\r\nBad request signature"));
+                }
+                else
+                {
+                    Console.WriteLine("ok");
+                    InteractionObject interactionMsg = JsonSerializer.Deserialize<InteractionObject>(Encoding.UTF8.GetString(body));
+                    if (interactionMsg.type == 1)
                     {
-                        Console.WriteLine("Inner exception: {0}", e.InnerException.Message);
+                        string response = JsonSerializer.Serialize(
+                                new InteractionObject { type = 1 }, new JsonSerializerOptions { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingDefault });
+                        await sslStream.WriteAsync(Encoding.UTF8.GetBytes(httpHeader + $"content-length: {response.Length}\r\n\r\n" + response));
                     }
-                    Console.WriteLine("Authentication failed - closing the connection.");
-                    sslStream.Close();
-                    client.Close();
-                    return;
+                    if (interactionMsg.type == 2)
+                    {
+                        if (interactionMsg.data.name == "test")
+                        {
+                            Console.WriteLine("initializing test command");
+                            string response = JsonSerializer.Serialize(new InteractionResponse { type = 4, data = new InteractionCallbackData { content = "it works" } },
+                                new JsonSerializerOptions { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingDefault });
+                            await sslStream.WriteAsync(Encoding.UTF8.GetBytes(httpHeader + $"content-length: {response.Length}" + "\r\n\r\n" + response));
+                        }
+                    }
                 }
             }
         }
-        static async Task GetCommands(string token, string appID)
+        async Task GetCommands(string token, string appID)
         {
             using HttpClient client = new HttpClient();
-            client.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", "Bot "+token);
+            client.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", "Bot " + token);
             var response = await client.GetAsync($"https://discord.com/api/v10/applications/{appID}/commands");
             if (response.IsSuccessStatusCode)
             {
@@ -132,8 +108,8 @@ namespace vmb
                 Console.WriteLine(responseText);
             }
         }
-        
-        static async Task DeleteCommand(string token, string appID, string commandID)
+
+        async Task DeleteCommand(string token, string appID, string commandID)
         {
             using HttpClient client = new HttpClient();
             client.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", "Bot " + token);
@@ -141,15 +117,15 @@ namespace vmb
             Console.WriteLine(response.StatusCode);
             Console.WriteLine(response.Content.ReadAsStringAsync());
         }
-        static byte[] HexStrToByteArr(string hexStr)
+        byte[] HexStrToByteArr(string hexStr)
         {
             byte[] b = new byte[hexStr.Length >> 1];
             for (int i = 0; i < hexStr.Length - 1; i += 2)
             {
-                int val1 = (int)hexStr[i];
-                val1 -= (val1 < 58 ? 48 : (val1 < 97 ? 55 : 87));
-                int val2 = (int)hexStr[i + 1];
-                val2 -= (val2 < 58 ? 48 : (val2 < 97 ? 55 : 87));
+                int val1 = hexStr[i];
+                val1 -= val1 < 58 ? 48 : val1 < 97 ? 55 : 87;
+                int val2 = hexStr[i + 1];
+                val2 -= val2 < 58 ? 48 : val2 < 97 ? 55 : 87;
                 b[i >> 1] = (byte)((val1 << 4) + val2);
             }
             return b;
